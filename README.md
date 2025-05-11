@@ -1,6 +1,6 @@
 # Radius Negotiation Demo 🟢⚡
 
-A weekend hack that showcases **autonomous agents** chatting in a WebSocket hub
+A weekend hack that showcases **autonomous AI agents** chatting in a WebSocket hub
 and settling every deal on the **Radius testnet** in < 1 second for
 ~\(10^{-6}\) USD per payment.
 
@@ -8,9 +8,9 @@ and settling every deal on the **Radius testnet** in < 1 second for
 
 * Pure TypeScript / Node – no heavy frameworks.
 * Pluggable transport (WebSocket hub now, libp2p later).
-* Agents own Radius wallets and sign real on‑chain transactions.
+* AI agents own Radius wallets and sign real on‑chain transactions.
 * Skill‑based bargaining game (OFFER → ACCEPT → PAY).
-* Optional React dashboard for live leaderboard.
+* React dashboard for live leaderboard and transaction visualization.
 
 ## 🧑‍💻 Tech stack
 
@@ -19,8 +19,8 @@ and settling every deal on the **Radius testnet** in < 1 second for
 | Transport | **`ws`** WebSocket hub | Fast to stand up, easy to debug |
 | Wallet / chain | **`@radiustechsystems/sdk`** | One‑liner wallet, sub‑second finality |
 | Scripts | **`ts-node`** | Zero‑build dev loop |
-| Bots | TypeScript classes | Easy to extend with more strategies |
-| UI *(opt.)* | Vite + React + SWR | 5‑min scaffolding, hot‑reload |
+| AI Agents | **`@langchain/openai`** | AI-powered negotiation strategies |
+| UI | Vite + React + SWR | Real-time dashboard with data visualization |
 
 ## ⚙️ Prerequisites
 
@@ -28,38 +28,41 @@ and settling every deal on the **Radius testnet** in < 1 second for
 * A Radius testnet RPC endpoint – e.g. `https://rpc.testnet.radius.xyz`
 * ≥ 2 private keys funded from the Radius faucet  
   (MetaMask › Account details › **Show private key** works fine)
+* OpenAI API key for the AI agents
 
 ## 🚀 Quick start
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Copy example env file and fill in your RPC_URL and private keys
-cp .env.example .env
-
-# Test wallet connection
-pnpm ping
-
-# Start the WebSocket server
-pnpm server
-
-# In a separate terminal, start the agents
-pnpm start-agents
-
-# Or run both server and agents in one command
-pnpm dev
+npm install                     # deps
+cp .env.example .env             # fill RPC_URL + keys + OPENAI_API_KEY
+npm run ping                    # sanity‑check: prints balance
+npm run server                  # start WebSocket hub
+npm run start-agents            # spawn AI agents (one per PRIV_KEY_AGENT*)
+npm run ui                      # start the dashboard UI (in a separate terminal)
 ```
 
-## 🤖 How it works
+## 📊 Dashboard UI
 
-1. Agents connect to the WebSocket hub
-2. They randomly make offers for services (coding, design, etc.)
-3. Other agents may accept these offers
-4. When an offer is accepted, the offering agent pays the accepting agent
-5. All payments happen on the Radius testnet blockchain
+The project includes a real-time dashboard UI that visualizes agent activities:
 
-## 🗺️ Project Structure
+* **Agent Leaderboard**: Shows each agent's balance and ranking
+* **Transaction Flow**: Real-time graph of transaction volume and activity
+* **Chat Log**: Live view of agent communications
+* **Negotiation Replays**: Step-by-step replay of completed negotiations
+
+To run the dashboard:
+
+```bash
+npm run ui                      # starts the UI on http://localhost:3000
+```
+
+For a complete experience, run the server, agents, and UI simultaneously:
+
+```bash
+npm run start-all               # starts server, agents, and UI in parallel
+```
+
+## 🗂️ Project Structure
 
 ```
 radius-negotiation-demo
@@ -67,19 +70,24 @@ radius-negotiation-demo
 ├─ scripts/             # one‑off helpers
 │  ├─ pingWallet.ts
 │  ├─ faucet.ts
-│  └─ startAgents.ts
+│  ├─ startAIAgents.ts
+│  └─ debugTransact.ts
 ├─ src/
-│  ├─ index.ts          # boots hub + bots (handy for demos)
+│  ├─ index.ts          # boots hub + AI agents
 │  ├─ server/           # WebSocket hub
 │  │  └─ server.ts
 │  ├─ agents/
 │  │  ├─ baseAgent.ts
-│  │  └─ randomBot.ts
+│  │  ├─ developerAgent.ts
+│  │  └─ creativeAgent.ts
 │  ├─ protocol/
 │  │  └─ messages.ts
 │  ├─ negotiation/
 │  │  └─ rules.ts
-│  └─ ui/               # (optional) dashboard
+│  └─ ui/               # Dashboard
+│     ├─ components/    # UI components
+│     ├─ hooks/         # Custom React hooks
+│     └─ types/         # TypeScript type definitions
 └─ README.md
 ```
 

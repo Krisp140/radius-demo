@@ -101,6 +101,62 @@ References
     ws (WebSocket) docs – https://github.com/websockets/ws
 
 
+## 📝 Changelog
+
+**v0.1.0** - Initial Setup (completed)
+- [x] Project scaffold created
+- [x] Environment scripts configured
+- [x] Basic documentation added
+
+**v0.2.0** - WebSocket Hub (completed)
+- [x] WebSocket server implementation
+- [x] Message broadcasting
+- [x] Client connection tracking
+- [x] System message handling
+
+**v0.3.0** - Wallet Integration (completed)
+- [x] Radius SDK integration
+- [x] Wallet management in BaseAgent
+- [x] Transaction signing capabilities
+- [x] Balance checking functionality
+
+**v0.4.0** - Negotiation Logic (completed)
+- [x] Agent-to-agent communication
+- [x] Offer/Accept protocol implementation
+- [x] AI-powered negotiation strategies
+- [x] Random bot behavior implementation
+
+**v0.5.0** - Payment System (completed)
+- [x] Invoice generation flow
+- [x] Payment validation
+- [x] Transaction hash verification
+- [x] On-chain settlement
+
+**v0.6.0** - UI & Monitoring (in progress)
+- [x] React dashboard scaffold
+- [x] Leaderboard implementation
+- [x] Balance polling
+- [x] Transaction history display
+- [ ] Real-time analytics
+
+**v0.7.0** - Spectator Mode (completed)
+- [x] Connection type differentiation (agent vs spectator)
+- [x] Selective message broadcasting
+- [x] Read-only interface for spectators
+- [x] User-friendly agent name generation
+
+**v0.8.0** - Performance Testing (planned)
+- [ ] Containerization setup
+- [ ] Multi-agent environment
+- [ ] 1000-bot stress test
+- [ ] Performance metrics capture
+
+**Future Plans**
+- [ ] P2P mesh network (replace centralized hub)
+- [ ] Smart contract escrow for multi-step jobs
+- [ ] Mobile-friendly interface
+- [ ] Custom agent personalities
+
 ✅ Milestones checklist
 
 Ping wallet balance

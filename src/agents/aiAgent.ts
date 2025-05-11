@@ -12,8 +12,10 @@ export class AIAgent extends BaseAgent {
   protected memory: { role: string; content: string }[] = [];
   protected systemPrompt: string;
   protected chain: RunnableSequence;
+  protected type: string = 'AI';
   private offerInterval: NodeJS.Timeout | null = null;
   private offerIntervalMs = 15000; // 15 seconds
+  private maxMemoryLength = 10; // Limit memory to last 10 messages
   
   constructor(
     serverUrl: string, 
@@ -24,11 +26,12 @@ export class AIAgent extends BaseAgent {
   ) {
     super(serverUrl, privateKey, name);
     
-    // Initialize the OpenAI model
+    // Initialize the OpenAI model with token-saving settings
     this.model = new ChatOpenAI({
       openAIApiKey: process.env.OPENAI_API_KEY || openAIApiKey,
-      modelName: "gpt-3.5-turbo",
-      temperature: 0.7,
+      modelName: "gpt-3.5-turbo", // Using 3.5 to save tokens
+      temperature: 0.5, // Lower temperature for more predictable responses
+      maxTokens: 40, // Strictly limit response length
     });
     
     this.systemPrompt = systemPrompt;
@@ -43,7 +46,7 @@ export class AIAgent extends BaseAgent {
     this.chain = RunnableSequence.from([
       {
         input: (input) => input.input,
-        history: () => this.memory
+        history: () => this.memory.slice(-this.maxMemoryLength) // Only use last N messages
       },
       prompt,
       this.model,
@@ -53,19 +56,30 @@ export class AIAgent extends BaseAgent {
   
   protected async callAI(input: string): Promise<string> {
     try {
-      // Add the input to memory
-      this.memory.push({ role: "human", content: input });
+      // Trim the input to save tokens
+      const trimmedInput = input.length > 100 ? input.substring(0, 100) + "..." : input;
+      
+      // Add the trimmed input to memory
+      this.memory.push({ role: "human", content: trimmedInput });
+      
+      // Ensure memory doesn't exceed max length
+      if (this.memory.length > this.maxMemoryLength * 2) {
+        this.memory = this.memory.slice(-this.maxMemoryLength);
+      }
       
       // Call the chain
-      const response = await this.chain.invoke({ input });
+      const response = await this.chain.invoke({ input: trimmedInput });
       
-      // Add the response to memory
-      this.memory.push({ role: "assistant", content: response });
+      // Limit response length regardless of what model returns
+      const trimmedResponse = response.length > 100 ? response.substring(0, 100) : response;
       
-      return response;
+      // Add the trimmed response to memory
+      this.memory.push({ role: "assistant", content: trimmedResponse });
+      
+      return trimmedResponse;
     } catch (error) {
       console.error(`${this.name} AI call failed:`, error);
-      return "I encountered an error processing your request.";
+      return "I encountered an error.";
     }
   }
   
@@ -73,8 +87,8 @@ export class AIAgent extends BaseAgent {
     // Start the offer loop
     this.startOfferLoop();
     
-    // Announce presence
-    this.sendChat(`Hello! I'm ${this.name} and I'm ready to negotiate!`);
+    // Announce presence with minimal message including the name
+    this.sendChat(`${this.name} ready.`);
   }
   
   private startOfferLoop() {
@@ -89,20 +103,18 @@ export class AIAgent extends BaseAgent {
   
   private async considerMakingOffer() {
     try {
+      // Simplified market state with minimal info
       const marketState = {
         skills: this.skills,
-        pendingOffers: Array.from(this.pendingOffers.values()),
-        acceptedOffers: Array.from(this.acceptedOffers.values()),
         balance: await this.getBalance()
       };
       
-      const input = `Consider the current market state: ${JSON.stringify(marketState)}. 
-      Would you like to make an offer? If yes, specify the skill and price.`;
+      const input = `Make offer? Respond with skill and price only.`;
       
       const response = await this.callAI(input);
       
       // Parse the response to see if the AI wants to make an offer
-      if (response.toLowerCase().includes("yes") || response.toLowerCase().includes("offer")) {
+      if (response.toLowerCase().includes("skill") && response.toLowerCase().includes("price")) {
         // Extract the skill and price using regex
         const skillMatch = response.match(/skill[s]?:\s*["']?([a-zA-Z]+)["']?/i);
         const priceMatch = response.match(/price[s]?:\s*["']?(\d+\.?\d*)["']?/i);
@@ -123,17 +135,18 @@ export class AIAgent extends BaseAgent {
   }
   
   protected async handleOffer(offer: OfferMsg) {
+    // First use the base class implementation to check for previous partners
+    // If this returns, it means we should skip this offer
+    if (super.handleOffer(offer) === undefined) return;
+    
     // Don't respond to our own offers
     if (offer.from === this.address) return;
     
     console.log(`${this.name} received offer: ${offer.skill} for ${offer.price} from ${offer.from.substring(0, 6)}`);
     
     try {
-      const balance = await this.getBalance();
-      
-      const input = `You received an offer from ${offer.from.substring(0, 6)} for ${offer.skill} services at ${offer.price} coins. 
-      Your current balance is ${balance} coins. 
-      Would you like to accept this offer? (yes/no)`;
+      // Include previous partner information in the prompt
+      const input = `Offered: ${offer.skill} for ${offer.price}. This is a new partner you haven't traded with before. Accept? (yes/no)`;
       
       const response = await this.callAI(input);
       
@@ -141,6 +154,7 @@ export class AIAgent extends BaseAgent {
         console.log(`${this.name} accepting offer ${offer.id}`);
         this.sendAccept(offer.id);
         this.acceptedOffers.set(offer.id, offer);
+        // Add this address to previous partners - now handled in sendAccept
       }
     } catch (error) {
       console.error(`${this.name} failed to handle offer:`, error);
@@ -148,6 +162,9 @@ export class AIAgent extends BaseAgent {
   }
   
   protected handleAccept(accept: AcceptMsg) {
+    // Leverage the base class implementation
+    super.handleAccept(accept);
+    
     // Check if this is accepting our offer
     const offer = this.pendingOffers.get(accept.id);
     if (!offer) return;
@@ -185,37 +202,39 @@ export class AIAgent extends BaseAgent {
     // Remove from accepted offers after receiving payment
     this.acceptedOffers.delete(pay.id);
     
-    try {
-      // Generate a thank you message
-      const input = `You just received payment for ${offer.skill} services. Please generate a thank you message.`;
-      const thankYouMessage = await this.callAI(input);
-      
-      // Send the thank you message
-      this.sendChat(thankYouMessage);
-    } catch (error) {
-      console.error(`${this.name} failed to handle payment:`, error);
-      // Send a generic thank you message as fallback
-      this.sendChat(`Thank you for the payment for ${offer.skill} services!`);
-    }
+    // Use predefined message instead of AI to save tokens
+    this.sendChat(`Thanks for the payment for ${offer.skill}.`);
   }
   
   protected async handleChat(chat: ChatMsg) {
     // Don't respond to our own chats
     if (chat.from === this.address) return;
     
+    // Don't respond to system messages to save tokens
+    if (chat.from === 'system') return;
+    
     console.log(`${this.name} received chat: ${chat.text}`);
     
-    try {
-      // Process the chat message with AI
-      const input = `${chat.from.substring(0, 6)} said: "${chat.text}"`;
-      const response = await this.callAI(input);
-      
-      // Send the AI's response
-      this.sendChat(response);
-    } catch (error) {
-      console.error(`${this.name} failed to handle chat:`, error);
-      // Send a generic response as fallback
-      this.sendChat("I'm having trouble processing your message right now.");
+    // Limit chat interactions to save tokens
+    // Only respond to messages that seem like direct questions
+    if (chat.text.includes("?") || 
+        chat.text.toLowerCase().includes("can you") ||
+        chat.text.toLowerCase().includes("please")) {
+      try {
+        // Simplified input for minimal tokens
+        const input = `Reply briefly: ${chat.text}`;
+        const response = await this.callAI(input);
+        
+        // Send the AI's response
+        this.sendChat(response);
+      } catch (error) {
+        console.error(`${this.name} failed to handle chat:`, error);
+        // Even shorter fallback
+        this.sendChat(`${this.name} here. Service available.`);
+      }
+    } else {
+      // Don't respond to non-questions to save tokens
+      console.log(`${this.name} ignoring non-question chat to save tokens`);
     }
   }
   

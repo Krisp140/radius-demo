@@ -25,6 +25,7 @@ export class BaseAgent {
   protected connected = false;
   protected pendingOffers: Map<string, OfferMsg> = new Map();
   protected acceptedOffers: Map<string, OfferMsg> = new Map();
+  protected previousPartners: Set<string> = new Set(); // Track previous trading partners
 
   constructor(serverUrl: string, privateKey: string, name?: string) {
     // Store private key
@@ -46,14 +47,23 @@ export class BaseAgent {
     // Initialize Radius client
     this.initClient();
     
-    // Connect to WebSocket server
-    this.ws = new WebSocket(serverUrl);
+    // Append the agent name to the server URL
+    const connectionUrl = new URL(serverUrl);
+    connectionUrl.searchParams.append('name', this.name);
+    
+    // Connect to WebSocket server with the name parameter
+    this.ws = new WebSocket(connectionUrl.toString());
     this.setupWebSocket();
   }
 
   // Public getter for address as a hex string
   public getAddress(): string {
     return this.address;
+  }
+
+  // Public getter for agent name
+  public getName(): string {
+    return this.name;
   }
 
   protected async initClient() {
@@ -100,7 +110,10 @@ export class BaseAgent {
   protected reconnect() {
     if (!this.connected) {
       console.log(`${this.name} attempting to reconnect...`);
-      this.ws = new WebSocket(this.ws.url);
+      // Ensure we include the name parameter when reconnecting
+      const reconnectUrl = new URL(this.ws.url);
+      reconnectUrl.searchParams.set('name', this.name);
+      this.ws = new WebSocket(reconnectUrl.toString());
       this.setupWebSocket();
     }
   }
@@ -125,15 +138,42 @@ export class BaseAgent {
   }
 
   protected handleOffer(offer: OfferMsg) {
-    // To be implemented by subclasses
+    // Skip our own offers
+    if (offer.from === this.address) return;
+    
+    // Check if we've already dealt with this agent
+    if (this.previousPartners.has(offer.from)) {
+      console.log(`${this.name} is ignoring offer from ${offer.from.substring(0, 6)}... (previous partner)`);
+      return;
+    }
+    
+    // Subclasses should override this method for specific logic
   }
 
   protected handleAccept(accept: AcceptMsg) {
-    // To be implemented by subclasses
+    // Check if this is accepting our offer
+    const offer = this.pendingOffers.get(accept.id);
+    if (!offer) return;
+    
+    // Don't accept our own offers
+    if (accept.from === this.address) return;
+    
+    console.log(`${this.name}'s offer ${accept.id} was accepted by ${accept.from.substring(0, 6)}...`);
+    
+    // Add the acceptor to previous partners
+    this.previousPartners.add(accept.from);
+    
+    // Subclasses should override this method for specific payment logic
   }
 
   protected handlePay(pay: PayMsg) {
-    // To be implemented by subclasses
+    // Check if this payment is for an offer we accepted
+    const offer = this.acceptedOffers.get(pay.id);
+    if (!offer) return;
+    
+    console.log(`${this.name} received payment for offer ${pay.id}: ${pay.tx}`);
+    
+    // Subclasses should override this method for specific handling
   }
 
   protected handleChat(chat: ChatMsg) {
@@ -169,6 +209,12 @@ export class BaseAgent {
       from: this.address
     };
     this.sendMessage(accept);
+    
+    // Get the offer and add partner to previously traded list
+    const offer = this.pendingOffers.get(offerId);
+    if (offer) {
+      this.previousPartners.add(offer.from);
+    }
   }
 
   protected async sendPayment(offerId: string, toAddress: string, amount: number) {
@@ -221,6 +267,8 @@ export class BaseAgent {
 
   protected onConnect() {
     // To be implemented by subclasses
+    // When implementing, include the agent name in the introduction message
+    // Example: this.sendChat(`Hello! I'm ${this.name} and I'm ready to negotiate!`);
   }
 
   public async getBalance(): Promise<number> {
@@ -233,6 +281,7 @@ export class BaseAgent {
       // This avoids converting between string and Address object which was causing problems
       console.log(`${this.name} getting balance for address: ${this.address}`);
       const balance = await this.client.balanceAt(this.addressObj);
+      console.log(`${this.name} balance: ${balance.toString()}`);
       
       return parseFloat(balance.toString());
     } catch (error) {
@@ -246,5 +295,15 @@ export class BaseAgent {
     if (this.connected) {
       this.ws.close();
     }
+  }
+
+  // Helper to check if an address is a previous partner
+  protected hasTradedWith(address: string): boolean {
+    return this.previousPartners.has(address);
+  }
+
+  // Add a partner to the previously traded list
+  protected addPreviousPartner(address: string): void {
+    this.previousPartners.add(address);
   }
 } 

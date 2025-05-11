@@ -1,13 +1,20 @@
 import 'dotenv/config';
 import { DeveloperAgent } from '../src/agents/developerAgent';
 import { CreativeAgent } from '../src/agents/creativeAgent';
+import { BaseAgent } from '../src/agents/baseAgent';
 import { AddressFromHex, NewClient } from '@radiustechsystems/sdk';
 
 // Configuration
-const SERVER_URL = process.env.WS_SERVER_URL || 'ws://localhost:9000';
+const SERVER_URL = process.env.WS_SERVER_URL || 'ws://localhost:8080/ws';
 const AGENT_KEY_PREFIX = 'PRIV_KEY_AGENT';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const RPC_URL = process.env.RPC_URL || '';
+
+// Negotiation settings
+const INIT_NEGOTIATION_DELAY = 15000; // 15 seconds after startup
+const OFFER_INTERVAL = 60000; // 60 seconds between automated offers (increased from 30s)
+const AUTO_NEGOTIATION = process.env.AUTO_NEGOTIATION !== 'false'; // Enable by default, disable with AUTO_NEGOTIATION=false
+const LOW_TOKEN_MODE = process.env.LOW_TOKEN_MODE === 'true'; // Set to true to further reduce token usage
 
 // ANSI color codes for terminal output
 const colors = {
@@ -30,6 +37,16 @@ if (!RPC_URL) {
   console.error(`${colors.red}❌ RPC_URL environment variable is required. Please add it to your .env file.${colors.reset}`);
   process.exit(1);
 }
+
+// Agent configuration
+type AgentConfig = {
+  privateKey: string;
+  type: 'developer' | 'creative';
+  name?: string;
+};
+
+// Store agents for access
+const agents: BaseAgent[] = [];
 
 // Function to sanitize private key format
 function sanitizePrivateKey(privateKey: string): string {
@@ -64,124 +81,218 @@ async function checkBalance(address: string): Promise<string> {
   }
 }
 
-// Find agent private keys in environment variables
-const agentKeys: string[] = [];
-for (const key in process.env) {
-  if (key.startsWith(AGENT_KEY_PREFIX)) {
-    const privateKey = process.env[key];
-    if (privateKey) {
-      try {
-        agentKeys.push(sanitizePrivateKey(privateKey));
-      } catch (error) {
-        console.error(`${colors.red}Invalid private key format for ${key}:${colors.reset}`, error);
+// Function to generate an agent config array from environment variables
+function getAgentConfigsFromEnv(): AgentConfig[] {
+  const configs: AgentConfig[] = [];
+  
+  // Find agent private keys in environment variables
+  for (const key in process.env) {
+    if (key.startsWith(AGENT_KEY_PREFIX)) {
+      const privateKey = process.env[key];
+      if (privateKey) {
+        try {
+          const sanitizedKey = sanitizePrivateKey(privateKey);
+          
+          // Alternate between developer and creative types based on key number
+          // Extract the number from the environment variable name
+          const keyNumMatch = key.match(/(\d+)$/);
+          const keyNum = keyNumMatch ? parseInt(keyNumMatch[1]) : 0;
+          const type = keyNum % 2 === 1 ? 'developer' : 'creative';
+          
+          // Create default name based on type
+          const name = type === 'developer' ? `DevBot${keyNum}` : `ArtsyBot${keyNum}`;
+          
+          configs.push({
+            privateKey: sanitizedKey,
+            type,
+            name
+          });
+        } catch (error) {
+          console.error(`${colors.red}Invalid private key format for ${key}:${colors.reset}`, error);
+        }
       }
     }
   }
+  
+  return configs;
 }
 
-console.log(`${colors.blue}Found ${agentKeys.length} agent private keys in environment variables${colors.reset}`);
-
-if (agentKeys.length < 2) {
-  console.error(`${colors.red}❌ At least 2 agent private keys are required. Add them to .env as PRIV_KEY_AGENT1, PRIV_KEY_AGENT2, etc.${colors.reset}`);
-  process.exit(1);
+// Function to create an agent based on configuration
+async function createAgent(config: AgentConfig): Promise<BaseAgent | null> {
+  try {
+    console.log(`${colors.green}🚀 Starting ${config.name}...${colors.reset}`);
+    console.log(`${colors.blue}Private key: ${config.privateKey.substring(0, 6)}...${config.privateKey.substring(config.privateKey.length - 4)}${colors.reset}`);
+    
+    // Derive address for display
+    const hash = require('crypto').createHash('sha256');
+    hash.update(config.privateKey);
+    const digest = hash.digest('hex');
+    const derivedAddress = '0x' + digest.substring(0, 40);
+    
+    // Check balance directly before agent creation
+    console.log(`${colors.blue}Checking wallet balance directly...${colors.reset}`);
+    const directBalance = await checkBalance(derivedAddress);
+    console.log(`${colors.yellow}Pre-init balance check: ${directBalance} coins${colors.reset}`);
+    
+    // Create the appropriate agent type
+    let agent: BaseAgent;
+    
+    if (config.type === 'developer') {
+      agent = new DeveloperAgent(SERVER_URL, config.privateKey, OPENAI_API_KEY, config.name);
+    } else {
+      agent = new CreativeAgent(SERVER_URL, config.privateKey, OPENAI_API_KEY, config.name);
+    }
+    
+    const address = agent.getAddress();
+    console.log(`${colors.green}✅ ${config.name} started successfully${colors.reset}`);
+    console.log(`${colors.blue}Address: ${address}${colors.reset}`);
+    
+    // Test getting the balance via agent
+    console.log(`${colors.blue}Checking balance via agent...${colors.reset}`);
+    try {
+      const balance = await agent.getBalance();
+      console.log(`${colors.magenta}${config.name} balance: ${balance} coins${colors.reset}`);
+    } catch (error) {
+      console.error(`${colors.red}❌ Failed to get balance for ${config.name}:${colors.reset}`, error);
+    }
+    
+    console.log(`${colors.cyan}════════════════════════════════════${colors.reset}\n`);
+    return agent;
+  } catch (error) {
+    console.error(`${colors.red}❌ Failed to start ${config.type} agent:${colors.reset}`, error);
+    return null;
+  }
 }
 
-// Start one developer agent and one creative agent
-const agents: (DeveloperAgent | CreativeAgent)[] = [];
+// Setup autonomous negotiation between agents
+function setupNegotiation() {
+  if (!AUTO_NEGOTIATION) {
+    console.log(`${colors.yellow}Autonomous negotiation is disabled. Set AUTO_NEGOTIATION=true in .env to enable.${colors.reset}`);
+    return;
+  }
 
-// Create the agents
+  if (agents.length < 2) {
+    console.log(`${colors.yellow}Autonomous negotiation requires at least 2 agents.${colors.reset}`);
+    return;
+  }
+
+  console.log(`${colors.green}Setting up autonomous negotiation between agents...${colors.reset}`);
+  
+  // Start the negotiation cycle after initial delay
+  setTimeout(() => {
+    triggerInitialNegotiation();
+    
+    // Set up recurring offers at regular intervals
+    setInterval(() => {
+      triggerRandomOffer();
+    }, OFFER_INTERVAL);
+  }, INIT_NEGOTIATION_DELAY);
+}
+
+// Trigger initial negotiations between the first two agents
+function triggerInitialNegotiation() {
+  if (agents.length < 2) return;
+  
+  const devAgent = agents.find(a => a instanceof DeveloperAgent);
+  const creativeAgent = agents.find(a => a instanceof CreativeAgent);
+  
+  if (!devAgent || !creativeAgent) {
+    console.log(`${colors.yellow}Cannot start negotiation - need both developer and creative agent types${colors.reset}`);
+    return;
+  }
+  
+  console.log(`${colors.cyan}🔄 Triggering initial negotiation sequence...${colors.reset}`);
+  
+  // Developer agent offers coding services
+  setTimeout(() => {
+    const skill = 'coding';
+    const price = 0.005;
+    console.log(`${colors.magenta}${devAgent.constructor.name} is offering ${skill} services for ${price} coins${colors.reset}`);
+    // Access the protected method using indexing
+    const offerId = devAgent['sendOffer'](skill, price);
+    console.log(`${colors.blue}Offer created: ${offerId}${colors.reset}`);
+  }, 2000);
+  
+  // Creative agent offers design services
+  setTimeout(() => {
+    const skill = 'design';
+    const price = 0.008;
+    console.log(`${colors.magenta}${creativeAgent.constructor.name} is offering ${skill} services for ${price} coins${colors.reset}`);
+    // Access the protected method using indexing
+    const offerId = creativeAgent['sendOffer'](skill, price);
+    console.log(`${colors.blue}Offer created: ${offerId}${colors.reset}`);
+  }, 5000);
+}
+
+// Trigger a random offer from a random agent
+function triggerRandomOffer() {
+  if (agents.length === 0) return;
+  
+  // In low token mode, reduce the chance of making an offer
+  if (LOW_TOKEN_MODE && Math.random() > 0.5) {
+    console.log(`${colors.yellow}Skipping random offer to save tokens (LOW_TOKEN_MODE)${colors.reset}`);
+    return;
+  }
+  
+  // Select a random agent
+  const randomAgent = agents[Math.floor(Math.random() * agents.length)];
+  
+  // Determine the agent type and skills
+  const isDevAgent = randomAgent instanceof DeveloperAgent;
+  const skills = isDevAgent ? 
+    ['coding', 'testing', 'debugging'] : 
+    ['design', 'writing', 'branding'];
+  
+  // Select a random skill and generate a price
+  const skill = skills[Math.floor(Math.random() * skills.length)];
+  const price = (0.003 + Math.random() * 0.008).toFixed(3);
+  
+  console.log(`${colors.cyan}🔄 Triggering random offer...${colors.reset}`);
+  console.log(`${colors.magenta}${randomAgent.constructor.name} is offering ${skill} services for ${price} coins${colors.reset}`);
+  
+  // Access the protected method using indexing
+  const offerId = randomAgent['sendOffer'](skill, parseFloat(price));
+  console.log(`${colors.blue}Offer created: ${offerId}${colors.reset}`);
+}
+
+// Start agents based on configuration
 async function startAgents() {
   console.log(`\n${colors.cyan}════════════════════════════════════${colors.reset}`);
   console.log(`${colors.cyan}    STARTING AI AGENTS ON RADIUS    ${colors.reset}`);
   console.log(`${colors.cyan}════════════════════════════════════${colors.reset}\n`);
   
   console.log(`${colors.blue}RPC URL: ${RPC_URL}${colors.reset}`);
-  console.log(`${colors.blue}Server URL: ${SERVER_URL}${colors.reset}\n`);
+  console.log(`${colors.blue}Server URL: ${SERVER_URL}${colors.reset}`);
+  console.log(`${colors.blue}Auto Negotiation: ${AUTO_NEGOTIATION ? 'Enabled' : 'Disabled'}${colors.reset}`);
+  console.log(`${colors.blue}Low Token Mode: ${LOW_TOKEN_MODE ? 'Enabled' : 'Disabled'}${colors.reset}\n`);
   
-  // Create a developer agent with the first key
-  try {
-    const developerKey = agentKeys[0];
-    console.log(`${colors.green}🚀 Starting DevBot...${colors.reset}`);
-    // Don't log the full private key for security reasons
-    console.log(`${colors.blue}Private key: ${developerKey.substring(0, 6)}...${developerKey.substring(developerKey.length - 4)}${colors.reset}`);
-    
-    // Derive address for display before agent creation
-    const hash = require('crypto').createHash('sha256');
-    hash.update(developerKey);
-    const digest = hash.digest('hex');
-    const derivedAddress = '0x' + digest.substring(0, 40);
-    
-    // Check balance directly before agent creation
-    console.log(`${colors.blue}Checking wallet balance directly...${colors.reset}`);
-    const directBalance = await checkBalance(derivedAddress);
-    console.log(`${colors.yellow}Pre-init balance check: ${directBalance} coins${colors.reset}`);
-    
-    const devAgent = new DeveloperAgent(SERVER_URL, developerKey, OPENAI_API_KEY, "DevBot");
-    agents.push(devAgent);
-    
-    const devAddress = devAgent.getAddress();
-    console.log(`${colors.green}✅ DevBot started successfully${colors.reset}`);
-    console.log(`${colors.blue}Address: ${devAddress}${colors.reset}`);
-    
-    // Test getting the balance via agent
-    console.log(`${colors.blue}Checking balance via agent...${colors.reset}`);
-    try {
-      const balance = await devAgent.getBalance();
-      console.log(`${colors.magenta}DevBot balance: ${balance} coins${colors.reset}`);
-    } catch (error) {
-      console.error(`${colors.red}❌ Failed to get balance for DevBot:${colors.reset}`, error);
-    }
-    
-    console.log(`${colors.cyan}════════════════════════════════════${colors.reset}\n`);
-  } catch (error) {
-    console.error(`${colors.red}❌ Failed to start developer agent:${colors.reset}`, error);
+  // Get agent configurations from environment variables
+  const agentConfigs = getAgentConfigsFromEnv();
+  
+  if (agentConfigs.length < 2) {
+    console.error(`${colors.red}❌ At least 2 agent private keys are required. Add them to .env as PRIV_KEY_AGENT1, PRIV_KEY_AGENT2, etc.${colors.reset}`);
+    process.exit(1);
   }
-
-  // Create a creative agent with the second key
-  try {
-    const creativeKey = agentKeys[1];
-    console.log(`${colors.green}🚀 Starting ArtsyBot...${colors.reset}`);
-    // Don't log the full private key for security reasons
-    console.log(`${colors.blue}Private key: ${creativeKey.substring(0, 6)}...${creativeKey.substring(creativeKey.length - 4)}${colors.reset}`);
-    
-    // Derive address for display before agent creation
-    const hash = require('crypto').createHash('sha256');
-    hash.update(creativeKey);
-    const digest = hash.digest('hex');
-    const derivedAddress = '0x' + digest.substring(0, 40);
-    
-    // Check balance directly before agent creation
-    console.log(`${colors.blue}Checking wallet balance directly...${colors.reset}`);
-    const directBalance = await checkBalance(derivedAddress);
-    console.log(`${colors.yellow}Pre-init balance check: ${directBalance} coins${colors.reset}`);
-    
-    const creativeAgent = new CreativeAgent(SERVER_URL, creativeKey, OPENAI_API_KEY, "ArtsyBot");
-    agents.push(creativeAgent);
-    
-    const creativeAddress = creativeAgent.getAddress();
-    console.log(`${colors.green}✅ ArtsyBot started successfully${colors.reset}`);
-    console.log(`${colors.blue}Address: ${creativeAddress}${colors.reset}`);
-    
-    // Test getting the balance
-    console.log(`${colors.blue}Checking balance via agent...${colors.reset}`);
-    try {
-      const balance = await creativeAgent.getBalance();
-      console.log(`${colors.magenta}ArtsyBot balance: ${balance} coins${colors.reset}`);
-    } catch (error) {
-      console.error(`${colors.red}❌ Failed to get balance for ArtsyBot:${colors.reset}`, error);
+  
+  console.log(`${colors.blue}Found ${agentConfigs.length} agent configurations${colors.reset}`);
+  
+  // Create agents based on configuration
+  for (const config of agentConfigs) {
+    const agent = await createAgent(config);
+    if (agent) {
+      agents.push(agent);
     }
-    
-    console.log(`${colors.cyan}════════════════════════════════════${colors.reset}\n`);
-  } catch (error) {
-    console.error(`${colors.red}❌ Failed to start creative agent:${colors.reset}`, error);
   }
-
+  
   console.log(`${colors.green}Started ${agents.length} AI agents${colors.reset}`);
 
   if (agents.length === 0) {
     console.error(`${colors.red}❌ No agents could be started. Check errors above and fix environment variables.${colors.reset}`);
     process.exit(1);
   }
+  
+  // Set up autonomous negotiation if enabled
+  setupNegotiation();
 }
 
 // Handle process termination

@@ -9,7 +9,15 @@
     "ping": "ts-node scripts/pingWallet.ts",
     "start-agents": "ts-node scripts/startAIAgents.ts",
     "debug-address": "ts-node scripts/debugAddress.ts",
-    "debug-transact": "ts-node scripts/debugTransact.ts"
+    "debug-transact": "ts-node scripts/debugTransact.ts",
+    "ui": "vite",
+    "build-ui": "tsc && vite build",
+    "preview-ui": "vite preview",
+    "start-all": "concurrently \"npm run server\" \"npm run start-agents\" \"npm run ui\"",
+    "start": "node scripts/start-all.js",
+    "demo-negotiation": "ts-node scripts/demoNegotiation.ts",
+    "simple-demo": "ts-node scripts/simpleDemoNegotiation.ts",
+    "test-naming": "ts-node scripts/testConsistentNaming.ts"
   },
   "keywords": [],
   "author": "",
@@ -18,9 +26,21 @@
   "dependencies": {
     "@langchain/openai": "^0.5.10",
     "@radiustechsystems/sdk": "^1.0.0",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@types/styled-components": "^5.1.34",
+    "@vitejs/plugin-react": "^4.2.1",
+    "chart.js": "^4.4.2",
+    "concurrently": "^8.2.2",
     "dotenv": "^16.5.0",
     "langchain": "^0.3.24",
     "nanoid": "^5.1.5",
+    "react": "^18.2.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.2.0",
+    "styled-components": "^6.1.8",
+    "swr": "^2.2.5",
+    "vite": "^5.2.2",
     "ws": "^8.18.2"
   },
   "devDependencies": {
