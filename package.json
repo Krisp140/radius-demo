@@ -3,15 +3,24 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "ts-node src/index.ts",
+    "server": "ts-node src/server/server.ts",
+    "faucet": "ts-node scripts/faucet.ts",
+    "ping": "ts-node scripts/pingWallet.ts",
+    "start-agents": "ts-node scripts/startAIAgents.ts",
+    "debug-address": "ts-node scripts/debugAddress.ts",
+    "debug-transact": "ts-node scripts/debugTransact.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@langchain/openai": "^0.5.10",
     "@radiustechsystems/sdk": "^1.0.0",
     "dotenv": "^16.5.0",
+    "langchain": "^0.3.24",
+    "nanoid": "^5.1.5",
     "ws": "^8.18.2"
   },
   "devDependencies": {
